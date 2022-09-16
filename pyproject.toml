@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "tasweeper"
+version = "0.1.0"
+description = ""
+authors = ["Jon Gaul <jgaul3@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+opencv-python = "^4.6.0"
+PyAutoGUI = "^0.9.53"
+Pillow = "^9.2.0"
+PyGetWindow = "^0.0.9"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
