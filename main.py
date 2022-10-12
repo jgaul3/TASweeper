@@ -6,13 +6,29 @@ import pyautogui
 from mss import mss
 
 
-NUM_COLORS = 16
+THRESHOLD = 10
 
 
 def get_target_coords(target, array):
-    res = cv2.matchTemplate(array, target, cv2.TM_CCOEFF_NORMED)
+    res = cv2.matchTemplate(
+        array.astype(np.uint8), target.astype(np.uint8), cv2.TM_CCOEFF_NORMED
+    )
     _, max_amt, _, max_loc = cv2.minMaxLoc(res)
     return max_loc[::-1] if max_amt > 0.999 else None
+
+
+# Dict which accepts np arrays as keys
+class NumpyDict:
+    def __init__(self):
+        self.core_dict = {}
+
+    def __setitem__(self, key, value):
+        parsed_key = np.packbits(key).tobytes()
+        self.core_dict[parsed_key] = value
+
+    def __getitem__(self, item):
+        parsed_key = np.packbits(item).tobytes()
+        return self.core_dict[parsed_key]
 
 
 class GameState:
@@ -20,21 +36,21 @@ class GameState:
         self.templates = {}
         self.populate_templates()
 
-        self.lookup_dict = {}
-        self.grid_lookup_dict = {}
-        self.populate_lookup_dicts()
+        self.lookup_dict = NumpyDict()
+        self.populate_lookup_dict()
 
         self.sct = mss()
 
         self.top_corner = self.bottom_corner = (0, 0)
-        self.screen = self.level = self.hit_points = None
+        self.screen = self.board = self.level = self.hit_points = None
         self.update_game_state(initialize=True)
         self.grid_top_left, self.grid_bottom_right, self.grid_width = self.map_grid()
         height = (self.grid_bottom_right[0] - self.grid_top_left[0]) // self.grid_width
         width = (self.grid_bottom_right[1] - self.grid_top_left[1]) // self.grid_width
-        self.neighboring_counts = np.zeros((height, width), dtype=int)
+        self.grid_values = np.zeros((height, width), dtype=np.uint8)
+        self.neighboring_counts = np.zeros((height, width), dtype=np.uint8)
         self.is_revealed = np.zeros((height, width), dtype=bool)
-        self.monster_counts = self.get_monster_counts(width * height)
+        self.monster_counts = self.get_monster_counts()
 
     def populate_templates(self):
         for filename in os.listdir("templates"):
@@ -46,45 +62,46 @@ class GameState:
                 case _:
                     key = filename.split(".")[0]
             self.templates[key] = (
-                cv2.imread(f"templates/{filename}", cv2.IMREAD_GRAYSCALE) // NUM_COLORS
+                cv2.imread(f"templates/{filename}", cv2.IMREAD_GRAYSCALE) > THRESHOLD
             )
 
-    def populate_lookup_dicts(self):
-        for character, char_array in self.templates.items():
-            array_hash = hash("".join(char_array.flatten().astype(str)))
-            self.lookup_dict[array_hash] = (
-                int(character) if character.isdecimal() else character
-            )
+    def populate_lookup_dict(self):
+        # Unchecked (all bright) and empty (all dark) grids should read as 0
+        for i in [True, False]:
+            char_array = i and np.ones((7, 12), dtype=bool)
+            self.lookup_dict[char_array] = (0, 0)
 
-        for i in range(255 // NUM_COLORS):
-            base = np.ones((7, 12), dtype=int)
-            base *= i
-            array_hash = hash("".join(base.flatten().astype(str)))
-            self.grid_lookup_dict[array_hash] = 0
+        # "# " should return the number
+        for i in range(10):
+            char_array = self.str_to_array(f"{i} ")
+            self.lookup_dict[char_array] = (i, 0)
 
+        # Number combos incl. in center of patch
         for i in range(73):
+            char_array = self.str_to_array(f"{i}")
             if i < 10:
-                base = np.zeros((7, 12), dtype=int)
-                number = self.str_to_array(f"{i}")
-                base[:, 3:9] = number
-            else:
-                base = self.str_to_array(f"{i}")
-            array_hash = hash("".join(base.flatten().astype(str)))
-            self.grid_lookup_dict[array_hash] = i
+                base = np.zeros((7, 12), dtype=bool)
+                base[:, 3:9] = char_array
+                char_array = base
+            self.lookup_dict[char_array] = (i, 0)
+
+        # Monsters
+        for i in range(1, 10):
+            char_array = self.templates[f"mon_{i}"]
+            self.lookup_dict[char_array] = (0, i)
 
     def find_game_screen_coordinates(self, screen):
         top_corner = get_target_coords(self.templates["LV"], screen)
 
         pointer = [top_corner[0] + 100, top_corner[1]]
-        while screen[pointer[0], pointer[1]] > 0 or screen[
-            pointer[0] + 1, pointer[1]
-        ] < (NUM_COLORS - 1):
+        while np.any(screen[pointer[0] - 3 : pointer[0], pointer[1]]) or not np.all(
+            screen[pointer[0] : pointer[0] + 3, pointer[1]]
+        ):
             pointer[0] += 1
-        while screen[pointer[0], pointer[1]] > 0 or screen[
-            pointer[0], pointer[1] + 1
-        ] < (NUM_COLORS - 1):
+        pointer[0] -= 1
+        while not screen[pointer[0], pointer[1]]:
             pointer[1] += 1
-        bottom_corner = (pointer[0], pointer[1])
+        bottom_corner = (pointer[0] + 1, pointer[1])
         return top_corner, bottom_corner
 
     def update_game_state(self, initialize=False):
@@ -94,35 +111,37 @@ class GameState:
             cv2.cvtColor(
                 np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
             )
-            // NUM_COLORS
+            > THRESHOLD
         )
         if initialize:
             self.top_corner, self.bottom_corner = self.find_game_screen_coordinates(img)
 
         img = img[
-            self.top_corner[0] : self.bottom_corner[0] + 1,
-            self.top_corner[1] : self.bottom_corner[1] + 1,
+            self.top_corner[0] : self.bottom_corner[0],
+            self.top_corner[1] : self.bottom_corner[1],
         ]
 
-        img = img[::2, ::2]
-        self.screen = img
-        self.level = self.get_following_value(3, img[::2, ::2])
-        self.hit_points = self.get_following_value(8, img[::2, ::2])
+        self.screen = img[::2, ::2]
+        self.level = self.get_following_value(3, self.screen[::2, ::2])
+        self.hit_points = self.get_following_value(8, self.screen[::2, ::2])
 
         if initialize:
             return
 
-        board = self.screen[
+        new_board = self.screen[
             self.grid_top_left[0] : self.grid_bottom_right[0],
             self.grid_top_left[1] : self.grid_bottom_right[1],
         ]
         for (x, y), value in np.ndenumerate(self.neighboring_counts):
-            number_array = board[16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14]
-            self.neighboring_counts[x, y] = self.get_grid_value(number_array)
+            number_array = self.board[
+                16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14
+            ]
+            neighbors, own_count = self.lookup_dict[number_array]
+            self.neighboring_counts[x, y] = neighbors
             self.is_revealed[x, y] = 0 in number_array
 
-    def get_monster_counts(self, blanks):
-        count_array = [blanks]
+    def get_monster_counts(self):
+        count_array = [len(self.is_revealed.flatten())]
         for i in range(1, 10):
             count_target = self.str_to_array(f"LV{i}:x")
             count_coords = get_target_coords(count_target, self.screen)
@@ -136,7 +155,7 @@ class GameState:
         return count_array
 
     def str_to_array(self, to_convert):
-        vert_break = np.zeros((7, 1), dtype=np.uint8)
+        vert_break = np.zeros((7, 1), dtype=bool)
         char_arrays = []
         for character in to_convert:
             char_arrays.append(self.templates[character])
@@ -145,47 +164,31 @@ class GameState:
         return np.hstack(char_arrays)
 
     def get_following_value(self, target_chars, array, coords=(0, 0)):
-        arr1 = array[
+        arr = array[
             coords[0] : coords[0] + 7,
-            coords[1] + 6 * target_chars : coords[1] + 6 * target_chars + 5,
+            coords[1] + 6 * target_chars : coords[1] + 6 * target_chars + 12,
         ]
-        arr2 = array[
-            coords[0] : coords[0] + 7,
-            coords[1] + 6 * target_chars + 6 : coords[1] + 6 * target_chars + 11,
-        ]
-        key1 = hash("".join(arr1.flatten().astype(str)))
-        key2 = hash("".join(arr2.flatten().astype(str)))
-        val1 = self.lookup_dict.get(key1, 0)
-        val2 = self.lookup_dict.get(key2, 0)
-
-        if val2 != " ":
-            val1 = 10 * val1 + val2
-        return val1
-
-    def get_grid_value(self, array):
-        array[array > 0] = 255 // NUM_COLORS
-        key = hash("".join(array.flatten().astype(str)))
-        return self.grid_lookup_dict.get(key, 0)
+        return self.lookup_dict[arr][0]
 
     def map_grid(self):
         pointer = [0, 0]
-        while self.screen[pointer[0], pointer[1]] > 0:
+        while self.screen[pointer[0], pointer[1]]:
             pointer[0] += 1
         pointer[0] += 1
         while self.screen[pointer[0], pointer[1]] == 0:
             pointer[1] += 1
         top_left = pointer.copy()
-        while self.screen[pointer[0], pointer[1]] > 0:
+        while self.screen[pointer[0], pointer[1]]:
             pointer[0] += 1
         width = pointer[0] - top_left[0] + 1
         while (
-            self.screen[pointer[0] + 1, pointer[1]] > 0
-            or self.screen[pointer[0] + 2, pointer[1]] > 0
+            self.screen[pointer[0] + 1, pointer[1]]
+            or self.screen[pointer[0] + 2, pointer[1]]
         ):
             pointer[0] += 1
         while (
-            self.screen[pointer[0], pointer[1] + 1] > 0
-            or self.screen[pointer[0], pointer[1] + 2] > 0
+            self.screen[pointer[0], pointer[1]]
+            or self.screen[pointer[0], pointer[1] + 2]
         ):
             pointer[1] += 1
         bottom_right = [pointer[0] + 2, pointer[1] + 2]
@@ -212,6 +215,7 @@ class GameState:
             else:
                 # Execute actions in queue
                 pass
+            self.update_game_state()
             # Update state
             # If HP is zero -> exit
             # Reveal monster values
