@@ -7,11 +7,3 @@ repos:
         language: system
         require_serial: true
         types: [python]
-    -   id: isort
-        name: isort
-        entry: poetry run isort
-        language: system
-        types: [python]
-        require_serial: true
-        args: ['--filter-files']
-        files: "^src/.*\\.py"
