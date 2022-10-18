@@ -1,6 +1,6 @@
 import random
 import time
-from typing import Set, Tuple
+from typing import Set, Tuple, Optional
 
 import cv2
 import numpy as np
@@ -11,12 +11,15 @@ from utils import THRESHOLD, templates, get_target_coords, str_to_array, lookup_
 
 from scipy.signal import convolve2d
 
+pyautogui.PAUSE = 0
 
-"""
-kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
 
-convolve2d(base_array, kernel)[1:-1, 1:-1]        
-"""
+class NoHitPoints(Exception):
+    pass
+
+
+class Win(Exception):
+    pass
 
 
 class GameState:
@@ -24,61 +27,87 @@ class GameState:
         self.sct = mss()
 
         self.top_corner = self.bottom_corner = (0, 1000)
-        self.screen = self.level = self.hit_points = None
+        self.screen = np.array([1])
+        self.level = self.hit_points = None
         self.update_game_state(initialize=True)
         self.grid_top_left, self.grid_bottom_right, self.grid_width = self.map_grid()
         height = (self.grid_bottom_right[0] - self.grid_top_left[0]) // self.grid_width
         width = (self.grid_bottom_right[1] - self.grid_top_left[1]) // self.grid_width
         self.grid_values = np.zeros((height, width), dtype=np.uint8)
         self.neighbor_count = np.zeros((height, width), dtype=np.uint8)
-        self.is_revealed = np.zeros((height, width), dtype=bool)
+        self.unrevealed = np.ones((height, width), dtype=bool)
         self.monster_counts = self.get_monster_counts()
 
-    def update_game_state(self, initialize=False):
+    def update_game_state(self, initialize=False) -> Optional[Set[Tuple[int, int]]]:
         pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
 
-        self.screen = (
-            cv2.cvtColor(
-                np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
+        while True:
+            self.screen = (
+                cv2.cvtColor(
+                    np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
+                )
+                > THRESHOLD
             )
-            > THRESHOLD
-        )
-        if initialize:
-            self.top_corner, self.bottom_corner = self.find_game_screen_coordinates()
 
-        self.screen = self.screen[
-            self.top_corner[0] : self.bottom_corner[0],
-            self.top_corner[1] : self.bottom_corner[1],
-        ]
+            if initialize:
+                (
+                    self.top_corner,
+                    self.bottom_corner,
+                ) = self.find_game_screen_coordinates()
+
+            self.screen = self.screen[
+                self.top_corner[0] : self.bottom_corner[0],
+                self.top_corner[1] : self.bottom_corner[1],
+            ]
+
+            if np.all(
+                np.equal(
+                    self.screen[: templates["LV"].shape[0], : templates["LV"].shape[1]],
+                    templates["LV"],
+                )
+            ):
+                break
+            else:
+                time.sleep(0.01)
+                print("screen shaking")
 
         self.screen = self.screen[::2, ::2]
         self.level = self.get_following_value(3, self.screen[::2, ::2])
         self.hit_points = self.get_following_value(8, self.screen[::2, ::2])
 
-        if initialize or self.hit_points == 0:
+        if initialize:
             return
+
+        if self.hit_points == 0:
+            raise NoHitPoints("You Died - RIP")
 
         self.screen = self.screen[
             self.grid_top_left[0] : self.grid_bottom_right[0],
             self.grid_top_left[1] : self.grid_bottom_right[1],
         ]
+        if not self.screen[0, 0] or np.all(~self.unrevealed):
+            raise Win(f"Win: {not self.screen[0, 0]}, {np.all(~self.unrevealed)}")
 
-        for (x, y), value in np.ndenumerate(self.is_revealed):
+        to_click = set()
+        for (x, y), _ in np.ndenumerate(self.unrevealed):
             number_array = self.screen[
                 16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14
             ]
             neighbors, own_count = lookup_dict[number_array]
-            self.neighbor_count[x, y] = neighbors
-            self.is_revealed[x, y] = 0 in number_array
+            self.unrevealed[x, y] = np.all(number_array)
             if own_count:
                 # Found a monster, register its value and click it to get the neighbors later
                 self.monster_counts[own_count] -= 1
                 self.grid_values[x, y] = own_count
-                self.click_grid(x, y)
+                to_click.add((x, y))
+            else:
+                self.neighbor_count[x, y] = neighbors
 
         self.monster_counts[0] = (
-            len(self.is_revealed.flatten()) - self.monster_counts[1:].sum()
+            len(self.unrevealed.flatten()) - self.monster_counts[1:].sum()
         )
+
+        return to_click
 
     def find_game_screen_coordinates(self):
         top_corner = get_target_coords(templates["LV"], self.screen)
@@ -103,7 +132,7 @@ class GameState:
                 monster_count = self.get_following_value(5, self.screen, count_coords)
                 count_array[i] = monster_count
 
-        count_array[0] = len(self.is_revealed.flatten()) - count_array.sum()
+        count_array[0] = len(self.unrevealed.flatten()) - count_array.sum()
 
         return count_array
 
@@ -132,21 +161,21 @@ class GameState:
             or self.screen[pointer[0], pointer[1] + 2]
         ):
             pointer[1] += 1
+        if pointer[1] + 2 >= self.screen.shape[1]:
+            pointer[1] += 1
         bottom_right = [pointer[0] + 2, pointer[1] + 1]
         return top_left, bottom_right, 16
 
     def click_grid(self, x, y):
         # Debugging to get game in focus, remove later
+        # pyautogui.click(
+        #     x=self.top_corner[1] // 2 + self.grid_top_left[1] + self.grid_width // 2,
+        #     y=self.top_corner[0] // 2
+        #     + self.grid_top_left[0]
+        #     + self.grid_width * -1
+        #     + self.grid_width // 2,
+        # )
         pyautogui.click(
-            clicks=1,
-            x=self.top_corner[1] // 2 + self.grid_top_left[1] + self.grid_width // 2,
-            y=self.top_corner[0] // 2
-            + self.grid_top_left[0]
-            + self.grid_width * -1
-            + self.grid_width // 2,
-        )
-        pyautogui.click(
-            clicks=1,
             x=self.top_corner[1] // 2
             + self.grid_top_left[1]
             + self.grid_width * y
@@ -156,42 +185,75 @@ class GameState:
             + self.grid_width * x
             + self.grid_width // 2,
         )
+        if x >= 0 and y >= 0:
+            self.unrevealed[x, y] = False
+            if np.all(~self.unrevealed):
+                raise Win("You win!")
 
     def get_random_unrevealed(self) -> Set[Tuple[int, int]]:
         x, y = np.where(
-            ~self.is_revealed
+            self.unrevealed
         )  # TODO: make sure you don't pick a known high value
         point = random.randrange(len(x))
         return {(x[point], y[point])}
 
     def get_unrevealed_under_level(self) -> Set[Tuple[int, int]]:
-        pass
+        kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
+        # unrevealed_neighbors is 8 if all neighbors are unrevealed (boring) or 0 if all are revealed (boring)
+        unrevealed_neighbors = convolve2d(self.unrevealed, kernel, boundary="symm")[
+            1:-1, 1:-1
+        ]
+        # # only clickable points for this heuristic
+        # unrevealed_boundary = np.all((unrevealed_neighbors < 8, self.unrevealed), axis=0)
+        # must have a neighbor with a number
+        number_boundary = np.all((unrevealed_neighbors > 0, ~self.unrevealed), axis=0)
+        contacting_nums_under_level = np.all(
+            (number_boundary, self.neighbor_count <= self.level), axis=0
+        )
+        neighbor_under_level = (
+            convolve2d(contacting_nums_under_level, kernel)[1:-1, 1:-1] > 0
+        )
+        safe_to_click = np.all((neighbor_under_level, self.unrevealed), axis=0)
+        x, y = np.where(safe_to_click)
+        return set(zip(x, y))
 
 
 def solve(game: GameState):
-    to_click = game.get_random_unrevealed()
     game.click_grid(0, -1)
+    game.click_grid(0, -1)
+    to_click = game.get_random_unrevealed()
     while True:
-        while to_click:
-            game.click_grid(*to_click.pop())
+        try:
+            while to_click:
+                game.click_grid(*to_click.pop())
 
-        game.update_game_state()
-
-        if game.hit_points == 0:
-            return
-
-        # Try to identify clickable squares.
-        # Start simple, get difficult, end with a random guess (weighted?)
-        to_click = game.get_unrevealed_under_level() or game.get_random_unrevealed()
+            # Start simple, get difficult, end with a random guess (weighted?)
+            to_click = (
+                game.update_game_state()
+                or game.update_game_state()
+                or game.get_unrevealed_under_level()
+                or game.get_random_unrevealed()
+            )
+            a = 1
+        except Exception as e:
+            # cv2.imwrite("fail.png", game.screen.astype(int) * 255)
+            print(type(e))
+            raise e
 
 
 def main():
     game = GameState()
     while True:
-        game.click_grid(0, -1)
-        solve(game)
-        if input("Continue? y/n") != "y":
-            break
+        try:
+            solve(game)
+        except Exception as e:
+            print(e)
+            if input("Continue? y/n") == "y":
+                game.click_grid(0, -1)
+                game.click_grid(0, -1)
+                game.__init__()
+            else:
+                break
 
 
 if __name__ == "__main__":
