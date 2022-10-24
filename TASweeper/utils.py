@@ -1,11 +1,18 @@
 import os
+from typing import Set, Tuple
 
 import cv2
 import numpy as np
+import pyautogui
 
-from TASweeper.numpy_dict import NumpyDict
+from numpy_dict import NumpyDict
 
+
+# pyautogui.DARWIN_CATCH_UP_TIME = 0.005
+pyautogui.PAUSE = 0
 THRESHOLD = 10
+
+clickable_set = Set[Tuple[int, int]]
 
 
 def populate_templates():
