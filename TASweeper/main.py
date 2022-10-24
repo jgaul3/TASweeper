@@ -1,7 +1,8 @@
+import sys
 import time
 
-from TASweeper.solvers.low_neighbor_count import get_unrevealed_under_level
-from TASweeper.solvers.random_unrevealed import get_random_unrevealed
+from solvers.low_neighbor_count import get_unrevealed_under_level
+from solvers.random_unrevealed import get_random_unrevealed
 from game_state import GameState
 
 
@@ -12,7 +13,9 @@ def main():
             game.click_grid(-1, 0, 2)
             to_click = get_random_unrevealed(game)
             while True:
-                # game.click_grid(-1, 0)  # Focus game if debugging
+                if sys.gettrace() is not None:
+                    game.click_grid(-1, 0, 2)  # Focus game if debugging
+                    print(to_click)
                 while to_click:
                     game.click_grid(*to_click.pop())
 
@@ -22,7 +25,6 @@ def main():
                     or get_unrevealed_under_level(game)
                     or get_random_unrevealed(game)
                 )
-                print(to_click)
 
         except Exception as e:
             print(e)

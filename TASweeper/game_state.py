@@ -17,6 +17,12 @@ class Win(Exception):
 
 
 class GameState:
+    """
+    GameState holds all information related to the game's current state.
+
+    All calculations should be done elsewhere.
+    """
+
     def __init__(self):
         self.sct = mss()
 
@@ -27,77 +33,10 @@ class GameState:
         height = (self.grid_bottom_right[0] - self.grid_top_left[0]) // self.grid_width
         width = (self.grid_bottom_right[1] - self.grid_top_left[1]) // self.grid_width
         self.grid_values = np.zeros((height, width), dtype=np.uint8)
+        self.value_known = np.zeros((height, width), dtype=bool)
         self.neighbor_count = np.zeros((height, width), dtype=np.uint8)
         self.unrevealed = np.ones((height, width), dtype=bool)
         self.monster_counts = self.get_monster_counts()
-
-    def update_game_state(self, initialize=False) -> Optional[Set[Tuple[int, int]]]:
-        pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
-
-        while True:
-            self.screen = (
-                cv2.cvtColor(
-                    np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
-                )
-                > THRESHOLD
-            )
-
-            if initialize:
-                (
-                    self.top_corner,
-                    self.bottom_corner,
-                ) = self.find_game_screen_coordinates()
-
-            self.screen = self.screen[
-                self.top_corner[0] : self.bottom_corner[0],
-                self.top_corner[1] : self.bottom_corner[1],
-            ]
-
-            if np.all(
-                np.equal(
-                    self.screen[: templates["LV"].shape[0], : templates["LV"].shape[1]],
-                    templates["LV"],
-                )
-            ):
-                break
-
-        self.screen = self.screen[::2, ::2]
-        self.level = self.get_following_value(3, self.screen[::2, ::2])
-        self.hit_points = self.get_following_value(8, self.screen[::2, ::2])
-
-        if initialize:
-            return
-
-        if self.hit_points == 0:
-            raise NoHitPoints("You Died - RIP")
-
-        self.screen = self.screen[
-            self.grid_top_left[0] : self.grid_bottom_right[0],
-            self.grid_top_left[1] : self.grid_bottom_right[1],
-        ]
-        if not self.screen[0, 0] or np.all(~self.unrevealed):
-            raise Win(f"Win: {not self.screen[0, 0]}, {np.all(~self.unrevealed)}")
-
-        to_click = set()
-        for (x, y), _ in np.ndenumerate(self.unrevealed):
-            number_array = self.screen[
-                16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14
-            ]
-            neighbors, own_count = lookup_dict[number_array]
-            self.unrevealed[x, y] = np.all(number_array)
-            if own_count:
-                # Found a monster, register its value and click it to get the neighbors later
-                self.monster_counts[own_count] -= 1
-                self.grid_values[x, y] = own_count
-                to_click.add((x, y))
-            else:
-                self.neighbor_count[x, y] = neighbors
-
-        self.monster_counts[0] = (
-            len(self.unrevealed.flatten()) - self.monster_counts[1:].sum()
-        )
-
-        return to_click
 
     def find_game_screen_coordinates(self):
         top_corner = get_target_coords(templates["LV"], self.screen)
@@ -172,3 +111,72 @@ class GameState:
             self.unrevealed[x, y] = False
             if np.all(~self.unrevealed):
                 raise Win("You win!")
+
+    def update_game_state(self, initialize=False) -> Optional[Set[Tuple[int, int]]]:
+        pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
+
+        while True:
+            self.screen = (
+                cv2.cvtColor(
+                    np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
+                )
+                > THRESHOLD
+            )
+
+            if initialize:
+                (
+                    self.top_corner,
+                    self.bottom_corner,
+                ) = self.find_game_screen_coordinates()
+
+            self.screen = self.screen[
+                self.top_corner[0] : self.bottom_corner[0],
+                self.top_corner[1] : self.bottom_corner[1],
+            ]
+
+            if np.all(
+                np.equal(
+                    self.screen[: templates["LV"].shape[0], : templates["LV"].shape[1]],
+                    templates["LV"],
+                )
+            ):
+                break
+
+        self.screen = self.screen[::2, ::2]
+        self.level = self.get_following_value(3, self.screen[::2, ::2])
+        self.hit_points = self.get_following_value(8, self.screen[::2, ::2])
+
+        if initialize:
+            return
+
+        if self.hit_points == 0:
+            raise NoHitPoints("You Died - RIP")
+
+        self.screen = self.screen[
+            self.grid_top_left[0] : self.grid_bottom_right[0],
+            self.grid_top_left[1] : self.grid_bottom_right[1],
+        ]
+        if not self.screen[0, 0] or np.all(~self.unrevealed):
+            raise Win(f"Win: {not self.screen[0, 0]}, {np.all(~self.unrevealed)}")
+
+        to_click = set()
+        for (x, y), _ in np.ndenumerate(self.unrevealed):
+            number_array = self.screen[
+                16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14
+            ]
+            neighbors, own_count = lookup_dict[number_array]
+            self.unrevealed[x, y] = np.all(number_array)
+            self.value_known[x, y] = ~np.all(number_array) or self.value_known[x, y]
+            if own_count:
+                # Found a monster, register its value and click it to get the neighbors later
+                self.monster_counts[own_count] -= 1
+                self.grid_values[x, y] = own_count
+                to_click.add((x, y))
+            else:
+                self.neighbor_count[x, y] = neighbors
+
+        self.monster_counts[0] = (
+            len(self.unrevealed.flatten()) - self.monster_counts[1:].sum()
+        )
+
+        return to_click
