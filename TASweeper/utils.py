@@ -8,7 +8,7 @@ import pyautogui
 from numpy_dict import NumpyDict
 
 
-# pyautogui.DARWIN_CATCH_UP_TIME = 0.005
+# pyautogui.DARWIN_CATCH_UP_TIME = 0.009
 pyautogui.PAUSE = 0
 THRESHOLD = 10
 
@@ -79,6 +79,14 @@ def get_target_coords(target, array):
     )
     _, max_amt, _, max_loc = cv2.minMaxLoc(res)
     return max_loc[::-1] if max_amt > 0.999 else None
+
+
+def get_following_value(target_chars, array, coords=(0, 0)):
+    arr = array[
+        coords[0] : coords[0] + 7,
+        coords[1] + 6 * target_chars : coords[1] + 6 * target_chars + 12,
+    ]
+    return lookup_dict[arr][0]
 
 
 templates = populate_templates()

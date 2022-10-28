@@ -1,11 +1,17 @@
-from typing import Set, Tuple, Optional
-
 import cv2
 import numpy as np
 import pyautogui
 from mss import mss
+from scipy.signal import convolve2d
 
-from utils import THRESHOLD, templates, get_target_coords, str_to_array, lookup_dict
+from utils import (
+    THRESHOLD,
+    templates,
+    get_target_coords,
+    str_to_array,
+    lookup_dict,
+    get_following_value,
+)
 
 
 class NoHitPoints(Exception):
@@ -33,10 +39,16 @@ class GameState:
         height = (self.grid_bottom_right[0] - self.grid_top_left[0]) // self.grid_width
         width = (self.grid_bottom_right[1] - self.grid_top_left[1]) // self.grid_width
         self.grid_values = np.zeros((height, width), dtype=np.uint8)
-        self.value_known = np.zeros((height, width), dtype=bool)
+        self.grid_value_known = np.zeros((height, width), dtype=bool)
         self.neighbor_count = np.zeros((height, width), dtype=np.uint8)
+        self.neighbor_known = np.zeros((height, width), dtype=bool)
         self.unrevealed = np.ones((height, width), dtype=bool)
-        self.monster_counts = self.get_monster_counts()
+        self._monster_counts = self.get_monster_counts()
+
+    @property
+    def monster_counts(self):
+        # Refactor to use grid_values (if needed)
+        raise NotImplementedError()
 
     def find_game_screen_coordinates(self):
         top_corner = get_target_coords(templates["LV"], self.screen)
@@ -58,19 +70,12 @@ class GameState:
             count_target = str_to_array(f"LV{i}:x")
             count_coords = get_target_coords(count_target, self.screen)
             if count_coords:
-                monster_count = self.get_following_value(5, self.screen, count_coords)
+                monster_count = get_following_value(5, self.screen, count_coords)
                 count_array[i] = monster_count
 
         count_array[0] = len(self.unrevealed.flatten()) - count_array.sum()
 
         return count_array
-
-    def get_following_value(self, target_chars, array, coords=(0, 0)):
-        arr = array[
-            coords[0] : coords[0] + 7,
-            coords[1] + 6 * target_chars : coords[1] + 6 * target_chars + 12,
-        ]
-        return lookup_dict[arr][0]
 
     def map_grid(self):
         pointer = [0, 0]
@@ -112,10 +117,11 @@ class GameState:
             if np.all(~self.unrevealed):
                 raise Win("You win!")
 
-    def update_game_state(self, initialize=False) -> Optional[Set[Tuple[int, int]]]:
+    def update_game_state(self, initialize=False):
         pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
 
         while True:
+            # noinspection PyTypeChecker
             self.screen = (
                 cv2.cvtColor(
                     np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
@@ -143,8 +149,8 @@ class GameState:
                 break
 
         self.screen = self.screen[::2, ::2]
-        self.level = self.get_following_value(3, self.screen[::2, ::2])
-        self.hit_points = self.get_following_value(8, self.screen[::2, ::2])
+        self.level = get_following_value(3, self.screen[::2, ::2])
+        self.hit_points = get_following_value(8, self.screen[::2, ::2])
 
         if initialize:
             return
@@ -159,24 +165,74 @@ class GameState:
         if not self.screen[0, 0] or np.all(~self.unrevealed):
             raise Win(f"Win: {not self.screen[0, 0]}, {np.all(~self.unrevealed)}")
 
-        to_click = set()
         for (x, y), _ in np.ndenumerate(self.unrevealed):
             number_array = self.screen[
                 16 * x + 4 : 16 * x + 11, 16 * y + 2 : 16 * y + 14
             ]
-            neighbors, own_count = lookup_dict[number_array]
-            self.unrevealed[x, y] = np.all(number_array)
-            self.value_known[x, y] = ~np.all(number_array) or self.value_known[x, y]
-            if own_count:
-                # Found a monster, register its value and click it to get the neighbors later
-                self.monster_counts[own_count] -= 1
-                self.grid_values[x, y] = own_count
-                to_click.add((x, y))
-            else:
-                self.neighbor_count[x, y] = neighbors
+            if ~np.all(number_array):  # Filled grids need no action
+                neighbors, own_count = lookup_dict[number_array]
+                self.unrevealed[x, y] = False
+                if own_count:  # Visible monster
+                    self.grid_values[x, y] = own_count
+                    self.grid_value_known[x, y] = True
+                else:  # Number, clicked monster, or blank
+                    self.neighbor_count[x, y] = neighbors
+                    self.grid_value_known[x, y] = True
+                    self.neighbor_known[x, y] = True
 
-        self.monster_counts[0] = (
-            len(self.unrevealed.flatten()) - self.monster_counts[1:].sum()
-        )
+    def derive_lone_values(self):
+        found_value = True
+        while found_value:
+            found_value = False
+            power_kernel = np.array([[1, 2, 4], [8, 0, 16], [32, 64, 128]])
 
-        return to_click
+            power_mapping = {
+                0: (0, 0),
+                1: (1, 1),
+                2: (1, 0),
+                4: (1, -1),
+                8: (0, 1),
+                16: (0, -1),
+                32: (-1, 1),
+                64: (-1, 0),
+                128: (-1, -1),
+            }
+
+            power_array = convolve2d(~self.grid_value_known, power_kernel)[1:-1, 1:-1]
+            has_one_unknown_neighbor = np.all(
+                (
+                    np.bitwise_and(power_array, power_array - 1)
+                    == 0,  # where power_array is a power of 2
+                    power_array != 0,  # where power_array is close to an unknown value
+                    self.neighbor_known,  # where neighbor value is known
+                ),
+                axis=0,
+            )
+
+            power_array[
+                ~has_one_unknown_neighbor
+            ] = 0  # Set all others to zero, only dealing with powers of 2
+
+            indices_array = np.indices(power_array.shape).transpose(1, 2, 0)
+            for key in power_mapping:
+                indices_array[power_array == key] += power_mapping[key]
+
+            kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
+
+            known_value_modifier = convolve2d(self.grid_values, kernel)[1:-1, 1:-1]
+            modified_neighbor_count = self.neighbor_count - known_value_modifier
+
+            coord_value_set = set(
+                map(
+                    tuple,
+                    np.dstack((indices_array, modified_neighbor_count))[
+                        np.where(power_array != 0)
+                    ],
+                )
+            )
+
+            if coord_value_set:
+                found_value = True
+                for x, y, value in coord_value_set:
+                    self.grid_values[x, y] = value
+                    self.grid_value_known[x, y] = True

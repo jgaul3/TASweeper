@@ -1,8 +1,10 @@
 import sys
 import time
 
-from solvers.low_neighbor_count import get_unrevealed_under_level
+from solvers.known_under_level import get_known_under_level
+from solvers.low_neighbor_count import get_low_neighbor_count
 from solvers.random_unrevealed import get_random_unrevealed
+from solvers.visible_monsters import get_visible_monsters
 from game_state import GameState
 
 
@@ -13,16 +15,23 @@ def main():
             game.click_grid(-1, 0, 2)
             to_click = get_random_unrevealed(game)
             while True:
+                to_click = sorted(list(to_click))
                 if sys.gettrace() is not None:
-                    game.click_grid(-1, 0, 2)  # Focus game if debugging
                     print(to_click)
+                    game.click_grid(-1, 0, 2)  # Focus game if debugging
                 while to_click:
-                    game.click_grid(*to_click.pop())
+                    game.click_grid(*to_click.pop(0))
+
+                game.update_game_state()
+
+                game.derive_lone_values()
 
                 # Start simple, get difficult, end with a random guess (weighted?)
                 to_click = (
-                    game.update_game_state()
-                    or get_unrevealed_under_level(game)
+                    (get_low_neighbor_count(game) | get_known_under_level(game))
+                    or get_visible_monsters(
+                        game
+                    )  # Not enough info, try revealing monsters
                     or get_random_unrevealed(game)
                 )
 
