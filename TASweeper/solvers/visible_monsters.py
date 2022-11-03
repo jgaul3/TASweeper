@@ -5,6 +5,7 @@ from TASweeper.game_state import GameState
 from TASweeper.utils import clickable_set
 
 
+# Click all monsters which are next to unrevealed squares.
 def get_visible_monsters(game: GameState) -> clickable_set:
     kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
     # unrevealed_neighbors is 8 if all neighbors are unrevealed (boring) or 0 if all are revealed (boring)
