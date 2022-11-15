@@ -2,9 +2,12 @@ import numpy as np
 from scipy.signal import convolve2d
 
 
+from TASweeper.game_state import GameState
+
+
 # Fast way to identify squares where neighbor count
 # can only come from a single neighbor
-def derive_lone_values(game):
+def derive_lone_values(game: GameState):
     found_value = True
     while found_value:
         found_value = False

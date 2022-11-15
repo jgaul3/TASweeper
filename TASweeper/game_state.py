@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import pyautogui
 from mss import mss
-from scipy.signal import convolve2d
 
 from utils import (
     THRESHOLD,
@@ -56,7 +55,6 @@ class GameState:
             "grid_values": np.copy(self.grid_values),
             "grid_value_known": np.copy(self.grid_value_known),
             "neighbor_count": np.copy(self.neighbor_count),
-            "modified_neighbor_count": np.copy(self.modified_neighbor_count),
             "neighbor_known": np.copy(self.neighbor_known),
         }
 

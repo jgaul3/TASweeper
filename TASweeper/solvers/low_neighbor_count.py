@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import convolve2d
+from scipy.signal import correlate2d
 
 from TASweeper.game_state import GameState
 from TASweeper.utils import clickable_set
@@ -9,12 +9,12 @@ from TASweeper.utils import clickable_set
 def get_low_neighbor_count(game: GameState) -> clickable_set:
     kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
     # unrevealed_neighbors is 8 if all neighbors are unrevealed (boring) or 0 if all are revealed (boring)
-    unrevealed_neighbors = convolve2d(game.unrevealed, kernel, boundary="symm")[
-        1:-1, 1:-1
-    ]
+    unrevealed_neighbors = correlate2d(
+        game.unrevealed, kernel, boundary="symm", mode="same"
+    )
 
     # Account for values which are high due to known monsters
-    known_value_modifier = convolve2d(game.grid_values, kernel)[1:-1, 1:-1]
+    known_value_modifier = correlate2d(game.grid_values, kernel, mode="same")
     modified_neighbor_count = game.neighbor_count - known_value_modifier
 
     # must have a neighbor with a number
@@ -24,7 +24,7 @@ def get_low_neighbor_count(game: GameState) -> clickable_set:
         axis=0,
     )
     neighbor_under_level = (
-        convolve2d(contacting_nums_under_level, kernel)[1:-1, 1:-1] > 0
+        correlate2d(contacting_nums_under_level, kernel, mode="same") > 0
     )
     safe_to_click = np.all(
         (neighbor_under_level, game.unrevealed, game.grid_values <= game.level), axis=0
