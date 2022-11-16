@@ -1,3 +1,5 @@
+import time
+
 import cv2
 import numpy as np
 import pyautogui
@@ -127,6 +129,7 @@ class GameState:
 
     def update_game_state(self, initialize=False):
         pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
+        time.sleep(0.01)
 
         while True:
             # noinspection PyTypeChecker

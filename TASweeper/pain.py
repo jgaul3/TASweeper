@@ -1,5 +1,3 @@
-from itertools import permutations
-
 import numpy as np
 from scipy.signal import correlate2d
 
@@ -168,28 +166,39 @@ def pain(game: GameState) -> clickable_set:
     modified_neighbor_count = game.neighbor_count - known_value_modifier
 
     neighbor_squares = np.all(
-        (unrevealed_neighbors > 0, unrevealed_neighbors < 8, game.neighbor_known),
+        (
+            unrevealed_neighbors > 0,
+            unrevealed_neighbors < 8,
+            game.neighbor_known,
+            set_array != set(),
+        ),
         axis=0,
     )
-    index_list = list(zip(*np.where(neighbor_squares)))
     to_click = set()
     updated_values = False
-    for i1, i2 in permutations(index_list, 2):
-        if set_array[i1] and set_array[i2] and set_array[i1] < set_array[i2]:
-            # check other elements in i1
-            diff = set_array[i2] - set_array[i1]
-            obligate_neighbor_count = (
-                modified_neighbor_count[i2] - modified_neighbor_count[i1]
-            )
-            if obligate_neighbor_count < 0 or obligate_neighbor_count > 100:
-                raise Exception("Obligate neighbor count is messed up?")
-            if obligate_neighbor_count <= game.level:
-                to_click = to_click.union(diff)
-            elif len(diff) == 1:
-                updated_values = True
-                outsider = diff.pop()
-                game.grid_values[outsider] = obligate_neighbor_count
-                game.grid_value_known[outsider] = True
+    for i1 in zip(*np.where(neighbor_squares)):
+        relevant_set_mask = np.zeros(
+            (neighbor_squares.shape[0] + 4, neighbor_squares.shape[1] + 4), dtype=bool
+        )
+        relevant_set_mask[i1[0] : i1[0] + 5, i1[1] : i1[1] + 5] = True
+        relevant_set_mask = relevant_set_mask[2:-2, 2:-2]
+        relevant_set_mask = np.all((neighbor_squares, relevant_set_mask), axis=0)
+        for i2 in zip(*np.where(relevant_set_mask)):
+            if set_array[i1] < set_array[i2]:
+                # check other elements in i1
+                diff = set_array[i2] - set_array[i1]
+                obligate_neighbor_count = (
+                    modified_neighbor_count[i2] - modified_neighbor_count[i1]
+                )
+                if obligate_neighbor_count < 0 or obligate_neighbor_count > 100:
+                    raise Exception("Obligate neighbor count is messed up?")
+                if obligate_neighbor_count <= game.level:
+                    to_click = to_click.union(diff)
+                elif len(diff) == 1:
+                    updated_values = True
+                    outsider = diff.pop()
+                    game.grid_values[outsider] = obligate_neighbor_count
+                    game.grid_value_known[outsider] = True
 
     if updated_values:
         derive_lone_values(game)

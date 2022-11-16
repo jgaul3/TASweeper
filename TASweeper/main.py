@@ -55,7 +55,7 @@ def debug_solve(game: GameState):
             # debug_logging(game, to_click, len(trace))
             while to_click:
                 game.click_grid(*to_click.pop(0))
-                debug_clicking(game, max_hp)
+                # debug_clicking(game, max_hp)
 
             game.update_game_state()
             trace[-1]["updated_game"] = game.copy_state()
@@ -80,7 +80,7 @@ def debug_solve(game: GameState):
 
             if game.hit_points < max_hp:
                 print("huh")
-    except (Win, NoHitPoints):
+    except Win:
         raise
     except Exception:
         with open("test_game.pickle", "wb") as file:
