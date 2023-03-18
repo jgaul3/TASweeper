@@ -8,7 +8,6 @@ authors = ["Jon Gaul <jgaul3@gmail.com>"]
 python = "^3.10"
 opencv-python = "^4.6.0"
 PyAutoGUI = "^0.9.53"
-Pillow = "^9.2.0"
 mss = "^6.1.0"
 black = "^22.8.0"
 scipy = "^1.9.2"

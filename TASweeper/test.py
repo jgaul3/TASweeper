@@ -1,10 +1,6 @@
-from types import SimpleNamespace
-
-import numpy as np
-
 import pickle
 
-from TASweeper.pain import pain
+from TASweeper.solvers.subset_overlaps import pain
 
 if __name__ == "__main__":
     # test_game = SimpleNamespace(
@@ -140,7 +136,7 @@ if __name__ == "__main__":
     #     ], dtype=bool),
     #     level=1,
     # )
-    with open("test_game.pickle", "rb") as file:
+    with open("onc_game.pickle", "rb") as file:
         test_game = pickle.load(file)
     # noinspection PyTypeChecker
     to_click = pain(test_game)

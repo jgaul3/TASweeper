@@ -1,20 +1,17 @@
 import pickle
 import sys
-import time
 from copy import copy
 
-from TASweeper.pain import pain
-from debugging import debug_logging, debug_clicking
-from derive_lone_values import derive_lone_values
 from game_state import GameState, Win, NoHitPoints
+from solvers.derive_lone_values import derive_lone_values
 from solvers.known_under_level import get_known_under_level
 from solvers.low_neighbor_count import get_low_neighbor_count
+from solvers.subset_overlaps import get_subset_overlaps
 from solvers.random_unrevealed import get_random_unrevealed
 from solvers.visible_monsters import get_visible_monsters
 
 
 def solve(game: GameState):
-    game.click_grid(-1, 0, 2)
     to_click = get_random_unrevealed(game)
     while True:
         to_click = sorted(list(to_click))
@@ -27,9 +24,9 @@ def solve(game: GameState):
 
         to_click = (
             # Try to reveal more of the grid
-            get_low_neighbor_count(game) | get_known_under_level(game)
-            # Want to avoid if possible
-            or pain(game)
+            get_subset_overlaps(game)
+            | get_low_neighbor_count(game)
+            | get_known_under_level(game)
             # Not enough info, try clicking revealed monsters
             or get_visible_monsters(game)
             # Still no info, just guess
@@ -41,7 +38,6 @@ def debug_solve(game: GameState):
     to_click_type = "random"
     max_hp = game.hit_points
     trace = []
-    game.click_grid(-1, 0, 2)
     to_click = get_random_unrevealed(game)
     try:
         while True:
@@ -68,9 +64,6 @@ def debug_solve(game: GameState):
             ):
                 to_click_type = "clickables"
                 to_click = clickable_squares
-            elif pain_clicks := pain(game):
-                to_click_type = "pain"
-                to_click = pain_clicks
             elif visibles := get_visible_monsters(game):
                 to_click_type = "vis"
                 to_click = visibles
@@ -90,14 +83,11 @@ def debug_solve(game: GameState):
 
 def main():
     tries = 20
-    game = GameState()
     while True:
         try:
+            game = GameState()
             engine = solve if sys.gettrace() is None else debug_solve
             engine(game)
-        except Win:
-            if input("Continue? y/n") != "y":
-                break
         except NoHitPoints:
             print(f"rip lol, {tries} tries left")
             tries -= 1
@@ -107,10 +97,6 @@ def main():
             print(e)
             if input("Continue? y/n") != "y":
                 break
-        time.sleep(1)
-        game.click_grid(-1, 0, 2)
-        time.sleep(1)
-        game.__init__()
 
 
 if __name__ == "__main__":

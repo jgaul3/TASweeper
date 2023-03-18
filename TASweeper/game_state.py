@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pyautogui
 from mss import mss
+from scipy.signal import convolve2d
 
 from utils import (
     THRESHOLD,
@@ -45,11 +46,20 @@ class GameState:
         self.neighbor_known = np.zeros((height, width), dtype=bool)
         self.unrevealed = np.ones((height, width), dtype=bool)
         self._monster_counts = self.get_monster_counts()
+        self.click_grid(-1, 0, 2)
 
     @property
     def monster_counts(self):
         # Refactor to use grid_values (if needed)
         raise NotImplementedError()
+
+    @property
+    def modified_neighbor_count(self):
+        # Account for values which are high due to known monsters
+        known_value_modifier = convolve2d(
+            self.grid_values, np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]]), mode="same"
+        )
+        return self.neighbor_count - known_value_modifier
 
     def copy_state(self):
         return {
@@ -61,18 +71,16 @@ class GameState:
         }
 
     def find_game_screen_coordinates(self):
-        top_corner = get_target_coords(templates["LV"], self.screen)
+        self.top_corner = get_target_coords(templates["LV"], self.screen)
 
-        pointer = [top_corner[0] + 100, top_corner[1]]
+        pointer = [self.top_corner[0] + 100, self.top_corner[1]]
         while np.any(
             self.screen[pointer[0] - 3 : pointer[0], pointer[1]]
         ) or not np.all(self.screen[pointer[0] : pointer[0] + 3, pointer[1]]):
             pointer[0] += 1
-        pointer[0] -= 1
-        while not self.screen[pointer[0], pointer[1]]:
+        while not self.screen[pointer[0] - 1, pointer[1]]:
             pointer[1] += 1
-        bottom_corner = (pointer[0] + 1, pointer[1])
-        return top_corner, bottom_corner
+        self.bottom_corner = (pointer[0], pointer[1])
 
     def get_monster_counts(self):
         count_array = np.zeros(10, dtype=np.uint8)
@@ -129,7 +137,7 @@ class GameState:
 
     def update_game_state(self, initialize=False):
         pyautogui.moveTo(self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
-        time.sleep(0.01)
+        time.sleep(0.05)
 
         while True:
             # noinspection PyTypeChecker
@@ -141,10 +149,7 @@ class GameState:
             )
 
             if initialize:
-                (
-                    self.top_corner,
-                    self.bottom_corner,
-                ) = self.find_game_screen_coordinates()
+                self.find_game_screen_coordinates()
 
             self.screen = self.screen[
                 self.top_corner[0] : self.bottom_corner[0],
@@ -173,8 +178,6 @@ class GameState:
             self.grid_top_left[0] : self.grid_bottom_right[0],
             self.grid_top_left[1] : self.grid_bottom_right[1],
         ]
-        if not self.screen[0, 0] or np.all(~self.unrevealed):
-            raise Win(f"Win: {not self.screen[0, 0]}, {np.all(~self.unrevealed)}")
 
         for (x, y), _ in np.ndenumerate(self.unrevealed):
             number_array = self.screen[
