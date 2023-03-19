@@ -82,21 +82,26 @@ def debug_solve(game: GameState):
 
 
 def main():
+    engine = solve if sys.gettrace() is None else debug_solve
     tries = 20
     while True:
+        game = GameState()
         try:
-            game = GameState()
-            engine = solve if sys.gettrace() is None else debug_solve
             engine(game)
         except NoHitPoints:
             print(f"rip lol, {tries} tries left")
             tries -= 1
             if tries == 0:
                 break
-        except Exception as e:
+        except Win as e:
             print(e)
             if input("Continue? y/n") != "y":
                 break
+        except Exception as e:
+            print("Other error:", e)
+            if input("Continue? y/n") != "y":
+                break
+        game.click_grid(-1, 0, 2)
 
 
 if __name__ == "__main__":
