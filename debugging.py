@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from TASweeper.game_state import GameState
-from TASweeper.utils import THRESHOLD, templates, get_following_value
+from TASweeper.utils import THRESHOLD, templates, lookup_dict
 
 
 def debug_logging(game: GameState, to_click, round_number):
@@ -41,8 +41,7 @@ def debug_clicking(game: GameState, max_hp):
         ):
             break
 
-    curr_screen = curr_screen[::2, ::2]
-    hit_points = get_following_value(8, curr_screen[::2, ::2])
+    hit_points = lookup_dict[game.screen[4:25:3, 51:93:3]][0]
 
     if hit_points < max_hp:
         print("huh")

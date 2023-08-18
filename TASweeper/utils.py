@@ -8,9 +8,16 @@ import pyautogui
 from numpy_dict import NumpyDict
 
 
+# cv2.imwrite(
+#     "asdf.bmp",
+#     np.array(cv2.cvtColor(
+#     np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
+# ) > 60, dtype=np.uint8) * 255
+# )
+
 # pyautogui.DARWIN_CATCH_UP_TIME = 0.009
-pyautogui.PAUSE = 0
-THRESHOLD = 10
+pyautogui.PAUSE = 0.1
+THRESHOLD = 60
 
 clickable_set = Set[Tuple[int, int]]
 
@@ -18,6 +25,8 @@ clickable_set = Set[Tuple[int, int]]
 def populate_templates():
     template_dict = {}
     for filename in os.listdir("TASweeper/templates"):
+        if filename.startswith("."):
+            continue
         match filename:
             case "colon.bmp":
                 key = ":"
@@ -32,37 +41,31 @@ def populate_templates():
     return template_dict
 
 
-def str_to_array(to_convert):
-    vert_break = np.zeros((7, 1), dtype=bool)
-    char_arrays = []
-    for character in to_convert:
-        char_arrays.append(templates[character])
-        char_arrays.append(vert_break)
-
-    return np.hstack(char_arrays)
-
-
 def populate_lookup_dict():
     lookup_dict = NumpyDict()
 
     # Unchecked (all bright) and empty (all dark) grids should read as 0
-    char_array = np.ones((7, 12), dtype=bool)
+    char_array = np.ones((7, 14), dtype=bool)
     lookup_dict[char_array] = (0, 0)
-    char_array = np.zeros((7, 12), dtype=bool)
+    char_array = np.zeros((7, 14), dtype=bool)
     lookup_dict[char_array] = (0, 0)
 
-    # "# " should return the number
+    # Number in center of "##" width
     for i in range(10):
-        char_array = str_to_array(f"{i} ")
+        char_array = np.zeros((7, 14), dtype=bool)
+        char_array[:, 4:10] = templates[str(i)]
         lookup_dict[char_array] = (i, 0)
 
-    # Number combos incl. in center of patch
+    # "##" combos
     for i in range(73):
-        char_array = str_to_array(f"{i}")
-        if i < 10:
-            base = np.zeros((7, 12), dtype=bool)
-            base[:, 3:9] = char_array
-            char_array = base
+        digit_string = f"{i:02d}"
+        char_array = np.hstack(
+            (
+                templates[str(digit_string[0])],
+                np.zeros((7, 2), dtype=bool),
+                templates[str(digit_string[1])],
+            )
+        )
         lookup_dict[char_array] = (i, 0)
 
     # Monsters
@@ -78,15 +81,9 @@ def get_target_coords(target, array):
         array.astype(np.uint8), target.astype(np.uint8), cv2.TM_CCOEFF_NORMED
     )
     _, max_amt, _, max_loc = cv2.minMaxLoc(res)
-    return max_loc[::-1] if max_amt > 0.999 else None
-
-
-def get_following_value(target_chars, array, coords=(0, 0)):
-    arr = array[
-        coords[0] : coords[0] + 7,
-        coords[1] + 6 * target_chars : coords[1] + 6 * target_chars + 12,
-    ]
-    return lookup_dict[arr][0]
+    if max_amt < 0.999:
+        raise Exception("Image not found")
+    return max_loc[::-1]
 
 
 templates = populate_templates()

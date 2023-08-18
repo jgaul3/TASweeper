@@ -11,6 +11,7 @@ PyAutoGUI = "^0.9.53"
 mss = "^6.1.0"
 black = "^22.8.0"
 scipy = "^1.9.2"
+pynput = "^1.7.6"
 
 [tool.poetry.dev-dependencies]
 
