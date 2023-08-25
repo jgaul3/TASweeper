@@ -1,6 +1,9 @@
 import pickle
 import sys
+import time
 from copy import copy
+
+import numpy as np
 
 from game_state import GameState, Win, NoHitPoints
 from solvers.derive_lone_values import derive_lone_values
@@ -14,9 +17,15 @@ from solvers.visible_monsters import get_visible_monsters
 def solve(game: GameState):
     to_click = get_random_unrevealed(game)
     while True:
+        if game.mouse.position[0] > 2050:
+            test = input("Continue?")
+
         to_click = sorted(list(to_click))
         while to_click:
             game.click_grid(*to_click.pop(0))
+
+        game.mouse.position = (game.bottom_corner[1] // 2, game.bottom_corner[0] // 2)
+        time.sleep(0.1)
 
         game.update_game_state()
 
@@ -41,8 +50,13 @@ def debug_solve(game: GameState):
     to_click = get_random_unrevealed(game)
     try:
         while True:
+            if game.mouse.position[0] > 2050:
+                test = input("Continue?")
+
             trace.append(dict())
             to_click = sorted(list(to_click))
+            if np.any((game.grid_values > 100)):
+                test = 1
 
             trace[-1]["initial_state"] = game.copy_state()
             trace[-1]["to_click"] = copy(to_click)
@@ -52,6 +66,12 @@ def debug_solve(game: GameState):
             while to_click:
                 game.click_grid(*to_click.pop(0))
                 # debug_clicking(game, max_hp)
+
+            game.mouse.position = (
+                game.bottom_corner[1] // 2,
+                game.bottom_corner[0] // 2,
+            )
+            time.sleep(0.1)
 
             game.update_game_state()
             trace[-1]["updated_game"] = game.copy_state()
@@ -101,7 +121,7 @@ def main():
             print("Other error:", e)
             if input("Continue? y/n") != "y":
                 break
-        game.click_grid(-1, 0, 2)
+        game.click_grid(-1, 0)
 
 
 if __name__ == "__main__":

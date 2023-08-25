@@ -3,7 +3,6 @@ from typing import Set, Tuple
 
 import cv2
 import numpy as np
-import pyautogui
 
 from numpy_dict import NumpyDict
 
@@ -15,9 +14,8 @@ from numpy_dict import NumpyDict
 # ) > 60, dtype=np.uint8) * 255
 # )
 
-# pyautogui.DARWIN_CATCH_UP_TIME = 0.009
-pyautogui.PAUSE = 0.1
-THRESHOLD = 60
+HIGH_THRESHOLD = 60
+THRESHOLD = 20
 
 clickable_set = Set[Tuple[int, int]]
 
@@ -27,16 +25,10 @@ def populate_templates():
     for filename in os.listdir("TASweeper/templates"):
         if filename.startswith("."):
             continue
-        match filename:
-            case "colon.bmp":
-                key = ":"
-            case "space.bmp":
-                key = " "
-            case _:
-                key = filename.split(".")[0]
+        key = filename.split(".")[0]
         template_dict[key] = (
             cv2.imread(f"TASweeper/templates/{filename}", cv2.IMREAD_GRAYSCALE)
-            > THRESHOLD
+            > HIGH_THRESHOLD
         )
     return template_dict
 

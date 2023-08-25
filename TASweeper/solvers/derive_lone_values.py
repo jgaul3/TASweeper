@@ -45,9 +45,17 @@ def derive_lone_values(game: GameState):
         for key in power_mapping:
             indices_array[power_array == key] += power_mapping[key]
 
-        indices_and_count = np.dstack((indices_array, game.modified_neighbor_count))
+        known_value_modifier = convolve2d(
+            game.grid_values, np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]]), mode="same"
+        )
+        modified_neighbor_count = game.neighbor_count - known_value_modifier
+
+        indices_and_count = np.dstack((indices_array, modified_neighbor_count))
         loner_squares = indices_and_count[np.where(power_array != 0)]
         coord_value_set = set(map(tuple, loner_squares))
+
+        if any(value[2] < 0 for value in coord_value_set):
+            test = 1
 
         if coord_value_set:
             found_value = True

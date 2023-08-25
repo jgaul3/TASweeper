@@ -3,14 +3,14 @@ import time
 import cv2
 import numpy as np
 from mss import mss
-from pynput.mouse import Controller, Button, Listener
-from scipy.signal import convolve2d
+from pynput.mouse import Controller, Button
 
 from utils import (
-    THRESHOLD,
+    HIGH_THRESHOLD,
     templates,
     get_target_coords,
     lookup_dict,
+    THRESHOLD,
 )
 
 
@@ -19,6 +19,10 @@ class NoHitPoints(Exception):
 
 
 class Win(Exception):
+    pass
+
+
+class RedoUpdate(Exception):
     pass
 
 
@@ -50,15 +54,9 @@ class GameState:
         self.neighbor_count = np.zeros((height, width), dtype=np.uint8)
         self.neighbor_known = np.zeros((height, width), dtype=bool)
         self.unrevealed = np.ones((height, width), dtype=bool)
-        self.click_grid(-1, 0, 2)
-
-    @property
-    def modified_neighbor_count(self):
-        # Account for values which are high due to known monsters
-        known_value_modifier = convolve2d(
-            self.grid_values, np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]]), mode="same"
-        )
-        return self.neighbor_count - known_value_modifier
+        self.clicked_squares = set()
+        self.click_grid(-1, 0)
+        self.click_grid(-1, 0)
 
     def copy_state(self):
         return {
@@ -108,7 +106,7 @@ class GameState:
 
         # Just under bottom box
         while (
-            not self.screen[pointer[0], pointer[1]]  # Not off edge of screen
+            pointer[1] < self.screen.shape[1]  # Not off edge of screen
             and self.screen[pointer[0] - grid_height, pointer[1]]  # Under a grid square
         ):
             pointer[1] += grid_height
@@ -116,7 +114,7 @@ class GameState:
         # One pixel past the bottom right corner
         return top_left, pointer, grid_height, grid_scale
 
-    def click_grid(self, x, y, clicks=2):
+    def click_grid(self, x, y):
         self.mouse.position = (
             self.top_corner[1] // 2
             + self.grid_top_left[1]
@@ -128,45 +126,50 @@ class GameState:
             + self.grid_width // 2,
         )
 
-        time.sleep(0.5)
-
-        self.mouse.click(Button.left, count=6)
-        if x >= 0 and y >= 0:
-            self.unrevealed[x, y] = False
-            if np.all(~self.unrevealed):
-                raise Win("You win!")
+        time.sleep(0.01)
+        self.mouse.press(Button.left)
+        time.sleep(0.03)
+        self.mouse.release(Button.left)
+        time.sleep(0.01)
+        self.clicked_squares.add((x, y))
 
     def update_game_state(self, initialize=False):
-        self.mouse.position = (self.bottom_corner[1] // 2, self.bottom_corner[0] // 2)
-        time.sleep(0.05)
+        ok = False
+        while not ok:
+            ok = self._update_game_state(initialize)
 
-        while True:
-            # noinspection PyTypeChecker
-            self.screen = (
-                cv2.cvtColor(
-                    np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
-                )
-                > THRESHOLD
+    def _update_game_state(self, initialize) -> bool:
+        # noinspection PyTypeChecker
+        self.screen = cv2.cvtColor(
+            np.array(self.sct.grab(self.sct.monitors[1])), cv2.COLOR_BGRA2GRAY
+        )
+        low_pass_screen = np.array(self.screen > THRESHOLD)
+        self.screen = self.screen > HIGH_THRESHOLD
+
+        if initialize:
+            self.find_game_screen_coordinates()
+
+        self.screen = self.screen[
+            self.top_corner[0] : self.bottom_corner[0],
+            self.top_corner[1] : self.bottom_corner[1],
+        ]
+        low_pass_screen = low_pass_screen[
+            self.top_corner[0] : self.bottom_corner[0],
+            self.top_corner[1] : self.bottom_corner[1],
+        ]
+
+        # Revisit!!!
+        shaking = not np.all(
+            np.equal(
+                self.screen[
+                    : templates["target"].shape[0], : templates["target"].shape[1]
+                ],
+                templates["target"],
             )
-
-            if initialize:
-                self.find_game_screen_coordinates()
-
-            self.screen = self.screen[
-                self.top_corner[0] : self.bottom_corner[0],
-                self.top_corner[1] : self.bottom_corner[1],
-            ]
-
-            # Revisit!!!
-            if np.all(
-                np.equal(
-                    self.screen[
-                        : templates["target"].shape[0], : templates["target"].shape[1]
-                    ],
-                    templates["target"],
-                )
-            ):
-                break
+        )
+        green_flash = np.all(self.screen[150:-150, 5])
+        if shaking or green_flash:
+            return False
 
         self.screen = self.screen[::2, ::2]
         # Get just the digits, consider it a revealed tile
@@ -174,23 +177,31 @@ class GameState:
         self.level = lookup_dict[self.screen[4:25:3, 219:261:3]][0]
 
         if initialize:
-            return
+            return True
 
         if self.hit_points == 0:
             raise NoHitPoints("You Died - RIP")
 
-        self.screen = self.screen[
+        low_pass_screen = low_pass_screen[::2, ::2]
+        low_pass_screen = low_pass_screen[
             self.grid_top_left[0] : self.grid_bottom_right[0] : self.grid_scale,
             self.grid_top_left[1] : self.grid_bottom_right[1] : self.grid_scale,
         ]
 
+        if not low_pass_screen[0, 0]:
+            raise Win("You win!")
+
         for (x, y), _ in np.ndenumerate(self.unrevealed):
-            single_box = self.screen[
+            single_box = low_pass_screen[
                 self.scaled_grid_width * x : self.scaled_grid_width * (x + 1),
                 self.scaled_grid_width * y : self.scaled_grid_width * (y + 1),
             ]
             searchable_subarray = single_box[4:11, 1:15]
-            if ~np.all(searchable_subarray):  # Filled grids need no action
+            if np.all(searchable_subarray):
+                # Are visuals lagging?
+                if (x, y) in self.clicked_squares:
+                    return False
+            else:
                 neighbors, own_count = lookup_dict[searchable_subarray]
                 self.unrevealed[x, y] = False
                 if own_count:  # Visible monster
@@ -200,3 +211,4 @@ class GameState:
                     self.neighbor_count[x, y] = neighbors
                     self.grid_value_known[x, y] = True
                     self.neighbor_known[x, y] = True
+        return True
